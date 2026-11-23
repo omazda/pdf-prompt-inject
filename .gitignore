@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+uv.lock
+
+# Сгенерированные PDF (результат работы инструмента)
+*_injected.pdf
+*_aigate.pdf
+
+# Исходные документы — не коммитим чужие материалы
+*.docx
+*.doc
+*.odt
+*.rtf
+!instructions.txt
+
+# ОС и редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Отчёты проверки
+*.log
+/tmp/
