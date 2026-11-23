@@ -87,7 +87,7 @@ def _add_run(paragraph, text: str, size_pt: float = 1.0,
     return run
 
 
-def _anchor_paragraphs(doc, count: int) -> list:
+def _anchor_paragraphs(doc, count: int, placement: str = "end") -> list:
     """`count` существующих абзацев с текстом, равномерно по документу.
 
     Возвращаются абзацы, к которым безопасно дописать прогон: с
@@ -106,6 +106,12 @@ def _anchor_paragraphs(doc, count: int) -> list:
     if not pool:
         # вообще нет абзацев — тогда только метатеги
         return []
+    if placement == "end":
+        # последние абзацы документа — инструкция уходит в конец
+        return pool[-count:]
+    if placement == "start":
+        return pool[:count]
+    # spread / start-end — равномерно по документу
     if count >= len(pool):
         return pool
     step = len(pool) / count
@@ -117,9 +123,9 @@ def _anchor_paragraphs(doc, count: int) -> list:
 # --------------------------------------------------------------------------
 
 def _layer_runs(doc, text: str, n: int, *, size_pt: float, color: str,
-                hidden: bool) -> int:
+                hidden: bool, placement: str = "end") -> int:
     done = 0
-    for p in _anchor_paragraphs(doc, n):
+    for p in _anchor_paragraphs(doc, n, placement):
         _add_run(p, text, size_pt=size_pt, color=color, hidden=hidden)
         done += 1
     return done
@@ -442,6 +448,7 @@ def _layer_watermark(doc, text: str, *, font: str, size_pt: float,
 
 def inject_docx(src: Path, out: Path, text: str, canary: str | None,
                 layers: dict | None = None, profile: str = "stealth",
+                placement: str = "end",
                 visible_size: float = 8.0, visible_color: str = "BFBFBF",
                 stealth_size: float = 1.0,
                 stealth_white: str = "FFFFFF", stealth_black: str = "000000",
@@ -461,13 +468,16 @@ def inject_docx(src: Path, out: Path, text: str, canary: str | None,
 
     if on("white_micro"):
         stats["white_micro"] = _layer_runs(
-            doc, full, 3, size_pt=stealth_size, color=stealth_white, hidden=False)
+            doc, full, 3, size_pt=stealth_size, color=stealth_white,
+            hidden=False, placement=placement)
     if on("hidden_vanish"):
         stats["hidden_vanish"] = _layer_runs(
-            doc, full, 3, size_pt=stealth_size, color=stealth_white, hidden=True)
+            doc, full, 3, size_pt=stealth_size, color=stealth_white,
+            hidden=True, placement=placement)
     if on("micro_black"):
         stats["micro_black"] = _layer_runs(
-            doc, full, 3, size_pt=stealth_size, color=stealth_black, hidden=False)
+            doc, full, 3, size_pt=stealth_size, color=stealth_black,
+            hidden=False, placement=placement)
     if on("core_properties"):
         stats["core_properties"] = _layer_core_properties(doc, full, canary)
     if on("comment"):
@@ -480,10 +490,12 @@ def inject_docx(src: Path, out: Path, text: str, canary: str | None,
         stats["alt_texts"] = _layer_alt_texts(doc, signal.strip()[:120])
     if on("visible_gray"):
         stats["visible_gray"] = _layer_runs(
-            doc, signal, 2, size_pt=visible_size, color=visible_color, hidden=False)
+            doc, signal, 2, size_pt=visible_size, color=visible_color,
+            hidden=False, placement=placement)
     if on("signal_repeats"):
         stats["signal_repeats"] = _layer_runs(
-            doc, signal, 6, size_pt=visible_size, color=visible_color, hidden=False)
+            doc, signal, 6, size_pt=visible_size, color=visible_color,
+            hidden=False, placement=placement)
     if on("caption_signals"):
         stats["caption_signals"] = _layer_captions(doc, signal, 6)
     if on("watermark"):
