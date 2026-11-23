@@ -53,7 +53,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 def _tmpfile(suffix: str) -> Path:
     """Временный файл с закрытым дескриптором.
@@ -207,7 +207,14 @@ def _run_soffice(cmd: list) -> None:
         sys.exit("LibreOffice не ответил за 10 минут — попробуйте другой файл")
     except subprocess.CalledProcessError as e:
         tail = (e.stderr or e.stdout or b"").decode("utf-8", "replace")[-400:]
-        sys.exit(f"LibreOffice вернул ошибку:\n{tail}")
+        hint = ""
+        if "could not be loaded" in tail:
+            hint = ("\nПохоже, формат не поддерживается установленным LibreOffice.\n"
+                    "  • для .doc/.odt/.rtf установите полный пакет: "
+                    "sudo apt install libreoffice-writer\n"
+                    "  • для .pdf → .docx конвертация не поддерживается, "
+                    "используйте --format pdf")
+        sys.exit(f"LibreOffice вернул ошибку:\n{tail}{hint}")
 
 
 def to_pdf(src: Path, out_pdf: Path) -> Path:
@@ -599,6 +606,13 @@ def run_docx(args, instruction: str, out: Path) -> None:
     from docx_inject import inject_docx
 
     src = args.input
+    if src.suffix.lower() == ".pdf":
+        sys.exit(
+            "Режим docx недоступен для PDF-исходника.\n"
+            "PDF нельзя обратимо сконвертировать в .docx.\n"
+            "  • нужен .docx  →  подайте .docx/.doc/.odt/.rtf\n"
+            "  • нужен PDF    →  используйте --format pdf"
+        )
     tmp_docx = None
     if src.suffix.lower() != ".docx":
         tmp_docx = _tmpfile(".docx")

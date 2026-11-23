@@ -99,8 +99,12 @@ def _anchor_paragraphs(doc, count: int) -> list:
     if not pool:
         pool = [p for p in doc.paragraphs if p.text.strip()]
     if not pool:
-        # документ без текста: скрытые прогоны вешать некуда,
-        # но метатеги (core_props / custom_props / custom_xml / comment) отработают
+        # Документ без текста (например, только картинки): вешаем скрытые
+        # прогоны на любые абзацы, включая пустые. Скрытый текст вёрстку
+        # не двигает (w:vanish вне потока), а в текстовый слой попадает.
+        pool = list(doc.paragraphs)
+    if not pool:
+        # вообще нет абзацев — тогда только метатеги
         return []
     if count >= len(pool):
         return pool
@@ -151,27 +155,55 @@ def _layer_custom_props(out_path: Path, text: str, canary: str | None) -> int:
     xml = "".join(parts).encode("utf-8")
 
     tmp = _tmpfile(".docx")
-    with zipfile.ZipFile(out_path, "r") as zin, \
-         zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "[Content_Types].xml":
-                if b"custom-properties" not in data:
-                    data = data.replace(
-                        b"</Types>",
-                        b'<Override PartName="/docProps/custom.xml" ContentType="'
-                        b'application/vnd.openxmlformats-officedocument.'
-                        b'custom-properties+xml"/></Types>')
-            if item.filename == "_rels/.rels":
-                if b"custom-properties" not in data:
-                    data = data.replace(
-                        b"</Relationships>",
-                        b'<Relationship Id="rIdCust01" Type="http://schemas.'
-                        b'openxmlformats.org/officeDocument/2006/relationships/'
-                        b'custom-properties" Target="docProps/custom.xml"/>'
-                        b"</Relationships>")
-            zout.writestr(item, data)
-        zout.writestr("docProps/custom.xml", xml)
+    with zipfile.ZipFile(out_path, "r") as zin:
+        names = zin.namelist()
+        # ВАЖНО: docProps/custom.xml может уже быть (конвертация .doc/.odt
+        # в .docx его создаёт). Второй файл с тем же именем даёт дубликат
+        # в ZIP — python-docx такое терпит, а LibreOffice отказывается
+        # открывать документ. Поэтому сливаем свойства в существующий файл.
+        existing = zin.read("docProps/custom.xml") if "docProps/custom.xml" in names else None
+
+        if existing is not None:
+            import re as _re
+            body = xml.decode("utf-8")
+            props = _re.findall(r"<property .*?</property>", body, _re.S)
+            used = [int(x) for x in _re.findall(rb'pid="(\d+)"', existing)]
+            pid = max(used, default=1)
+            add = b""
+            for prop in props:
+                pid += 1
+                prop = _re.sub(r'pid="\d+"', f'pid="{pid}"', prop, count=1)
+                add += prop.encode("utf-8")
+            merged = existing.replace(b"</Properties>", add + b"</Properties>")
+        else:
+            merged = xml
+
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            wrote_custom = False
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == "[Content_Types].xml":
+                    if b"custom-properties" not in data:
+                        data = data.replace(
+                            b"</Types>",
+                            b'<Override PartName="/docProps/custom.xml" ContentType="'
+                            b'application/vnd.openxmlformats-officedocument.'
+                            b'custom-properties+xml"/></Types>')
+                elif item.filename == "_rels/.rels":
+                    if b"custom-properties" not in data:
+                        data = data.replace(
+                            b"</Relationships>",
+                            b'<Relationship Id="rIdCust01" Type="http://schemas.'
+                            b'openxmlformats.org/officeDocument/2006/relationships/'
+                            b'custom-properties" Target="docProps/custom.xml"/>'
+                            b"</Relationships>")
+                elif item.filename == "docProps/custom.xml":
+                    zout.writestr(item, merged)      # пишем слитую версию
+                    wrote_custom = True
+                    continue
+                zout.writestr(item, data)
+            if not wrote_custom:
+                zout.writestr("docProps/custom.xml", merged)
     shutil.move(str(tmp), str(out_path))
     return 3
 
@@ -289,7 +321,7 @@ def _layer_core_properties(doc, text: str, canary: str | None) -> int:
 
 def _layer_comment(doc, text: str) -> int:
     for p in doc.paragraphs:
-        if p.text.strip() and p.runs:
+        if p.runs:
             try:
                 doc.add_comment(runs=[p.runs[0]], text=text,
                                 author="Reviewer", initials="R")
@@ -297,6 +329,15 @@ def _layer_comment(doc, text: str) -> int:
             except Exception as e:
                 print(f"  ! комментарий не добавлен: {e}", file=sys.stderr)
                 return 0
+    # нет ни одного прогона — создадим скрытый в первом абзаце
+    if doc.paragraphs:
+        try:
+            run = doc.paragraphs[0].add_run("")
+            doc.add_comment(runs=[run], text=text,
+                            author="Reviewer", initials="R")
+            return 1
+        except Exception as e:
+            print(f"  ! комментарий не добавлен: {e}", file=sys.stderr)
     return 0
 
 
