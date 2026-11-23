@@ -51,7 +51,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_INSTRUCTIONS = HERE / "instructions.txt"

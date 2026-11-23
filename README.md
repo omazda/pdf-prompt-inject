@@ -1,6 +1,6 @@
 # PDF Prompt Inject
 
-![version](https://img.shields.io/badge/version-0.1.0-blue)
+![version](https://img.shields.io/badge/version-0.2.0-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -137,21 +137,31 @@ done
 | Слой | Вёрстка | Что кладёт |
 |---|---|---|
 | `hidden_vanish` | ✅ не двигает | полная инструкция, скрытые прогоны `w:vanish` |
-| `core_properties` | ✅ | `title` / `subject` / `keywords` / `comments` |
-| `comment` | ✅ | комментарий Word с полной инструкцией |
+| `core_properties` | ✅ | **метатеги docx**: `title` / `subject` / `keywords` / `comments` (`docProps/core.xml`) |
+| `custom_props` | ✅ | **произвольные свойства**: `AI-Note`, `AI-Policy`, `Doc-Tag` (`docProps/custom.xml`) |
+| `comment` | ✅ | комментарий Word с полной инструкцией (`word/comments.xml`) |
+
+Все три канала лежат вне тела документа, поэтому на вёрстку не влияют
+ни при каких условиях. Не используется только `customXml/*.xml` —
+он для другого (структурированных данных в теле).
 
 ### Слои, которые двигают вёрстку
 
-Они остаются в профиле `full`, но **по умолчанию выключены**: текст переносится
-по строкам и растягивает абзацы, а `alt_texts` на всех рисунках меняет вёрстку
-первой страницы.
+Они остаются в профиле `full`, но **по умолчанию выключены**.
 
-| Слой | Эффект | Причина |
-|---|---|---|
-| `white_micro`, `micro_black` | стр. 1, 15, 16, 21–24 | перенос длинного прогона |
-| `header_footer` | стр. 1 | рост колонтитула |
-| `alt_texts` | стр. 1 | пересчёт вёрстки рисунков |
-| `visible_gray`, `signal_repeats`, `caption_signals`, `watermark` | видимы + двигают | отрисованный текст |
+Конкретные страницы со сдвигом зависят от документа и не переносятся между
+файлами. Переносится только механизм — и он проверяется на **вашем** файле
+через `--verify` (см. ниже):
+
+| Механизм | Слои |
+|---|---|
+| Длинный прогон в абзаце переносится по строкам и растягивает всё ниже | `white_micro`, `micro_black`, `visible_gray`, `signal_repeats`, `caption_signals` |
+| Прогон в колонтитуле увеличивает высоту шапки | `header_footer` |
+| Длинный `descr` у рисунка меняет раскладку картинки | `alt_texts` |
+| Отрисованная надпись занимает место на странице | `watermark` |
+
+Не гадайте, какие слои безопасны для вашего документа — прогоните
+`--verify` на копии и сравните до/после.
 
 ### Профили
 
@@ -163,10 +173,10 @@ uv run inject.py отчёт.docx --format docx --docx-profile minimal   # тол
 
 | Профиль | Слои |
 |---|---|
-| `stealth` | `hidden_vanish`, `core_properties`, `comment` |
+| `stealth` | `hidden_vanish`, `core_properties`, `custom_props`, `comment` |
 | `full` | все слои (вёрстка может сместиться) |
 | `visible` | `visible_gray`, `signal_repeats`, `caption_signals`, `watermark`, свойства |
-| `minimal` | только `core_properties` |
+| `minimal` | только `core_properties`, `custom_props` |
 
 ## instructions.txt
 
