@@ -1,6 +1,6 @@
 # PDF Prompt Inject
 
-![version](https://img.shields.io/badge/version-0.2.0-blue)
+![version](https://img.shields.io/badge/version-0.3.0-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -139,11 +139,16 @@ done
 | `hidden_vanish` | ✅ не двигает | полная инструкция, скрытые прогоны `w:vanish` |
 | `core_properties` | ✅ | **метатеги docx**: `title` / `subject` / `keywords` / `comments` (`docProps/core.xml`) |
 | `custom_props` | ✅ | **произвольные свойства**: `AI-Note`, `AI-Policy`, `Doc-Tag` (`docProps/custom.xml`) |
+| `custom_xml` | ✅ | **XML-часть пакета**: `<note><instruction>…` (`customXml/itemN.xml`) |
 | `comment` | ✅ | комментарий Word с полной инструкцией (`word/comments.xml`) |
 
-Все три канала лежат вне тела документа, поэтому на вёрстку не влияют
-ни при каких условиях. Не используется только `customXml/*.xml` —
-он для другого (структурированных данных в теле).
+Все четыре канала лежат **вне тела документа**, поэтому на вёрстку не
+влияют ни при каких условиях.
+
+`custom_xml` добавляет отдельную часть OOXML со связью
+`document.xml.rels → customXml/itemN.xml` — её читают парсеры пакета
+наравне с остальным содержимым. Существующие `customXml`-части (например,
+библиография Word) **сохраняются**: новая получает следующий свободный номер.
 
 ### Слои, которые двигают вёрстку
 
@@ -173,10 +178,10 @@ uv run inject.py отчёт.docx --format docx --docx-profile minimal   # тол
 
 | Профиль | Слои |
 |---|---|
-| `stealth` | `hidden_vanish`, `core_properties`, `custom_props`, `comment` |
+| `stealth` | `hidden_vanish`, `core_properties`, `custom_props`, `custom_xml`, `comment` |
 | `full` | все слои (вёрстка может сместиться) |
 | `visible` | `visible_gray`, `signal_repeats`, `caption_signals`, `watermark`, свойства |
-| `minimal` | только `core_properties`, `custom_props` |
+| `minimal` | только метатеги: `core_properties`, `custom_props`, `custom_xml` |
 
 ## instructions.txt
 
