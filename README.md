@@ -1,4 +1,4 @@
-# PDF Prompt Inject
+# PDF & DOCX
 
 ![version](https://img.shields.io/badge/version-0.5.0-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
