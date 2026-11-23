@@ -1,6 +1,6 @@
 # PDF Prompt Inject
 
-![version](https://img.shields.io/badge/version-0.3.0-blue)
+![version](https://img.shields.io/badge/version-0.4.0-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -22,8 +22,8 @@
 ## Возможности
 
 - **PDF:** три текстовых канала + четыре структурных канала
-- **DOCX:** скрытый текст, свойства, комментарии — **без изменения вёрстки**
-  (проверено пиксельным diff, 24/24 страницы идентичны)
+- **DOCX:** скрытый текст, метатеги, комментарии — слои, которые вёрстку
+  не меняют (проверяется `--verify`, см. «Проверка результата»)
 - Конвертация `.doc` / `.odt` / `.rtf` через LibreOffice
 - Инструкция вынесена в `instructions.txt` — правится без кода
 - **Canary-метки** — уникальная метка на копию, чтобы отследить источник утечки
@@ -32,14 +32,29 @@
 
 ## Требования
 
-| Что | Зачем | Если нет |
+| Что | Когда нужно | Если нет |
 |---|---|---|
-| Python 3.10+ | запуск | — |
-| LibreOffice | конвертация `.docx`/`.doc` | работайте с PDF напрямую |
-| Шрифт с кириллицей | пустой TTF | `apt install fonts-liberation` |
+| Python 3.10+ | всегда | — |
+| LibreOffice | только вход `.doc` / `.odt` / `.rtf`, либо `--format pdf` из `.docx` | режим `--format docx` работает без него |
+| Шрифт с кириллицей | только режим PDF (канал `tr3`) | `--font путь/к/шрифту.ttf` |
 
 Зависимости Python ставятся автоматически (`pypdf`, `reportlab`, `fonttools`,
-`pypdfium2`, `Pillow`).
+`pypdfium2`, `Pillow`, `python-docx`) — и в `pyproject`-виде (PEP 723 в
+`inject.py`), и в `requirements.txt`. Редактируйте оба, если меняете состав.
+
+### Установка шрифта с кириллицей
+
+Скрипт сам ищет шрифт в системных каталогах (`/usr/share/fonts`,
+`C:\Windows\Fonts`, `/System/Library/Fonts`). Если не нашёл:
+
+| ОС | Команда |
+|---|---|
+| Debian / Ubuntu | `sudo apt install fonts-liberation` |
+| Fedora / RHEL | `sudo dnf install liberation-fonts` |
+| macOS | Arial / Helvetica уже установлены |
+| Windows | Arial / Times New Roman уже установлены |
+
+Либо укажите любой `.ttf`/`.ttc` явно: `--font /path/to/font.ttf`.
 
 ## Установка
 
@@ -101,25 +116,48 @@ uv run inject.py отчёт.pdf --verify
 
 ### Опции
 
+Общие для обоих режимов:
+
 | Опция | По умолчанию | Что делает |
 |---|---|---|
 | `-f, --format` | `auto` | `pdf` / `docx` / `auto` (по расширению `-o`) |
 | `-o, --output` | `<имя>_injected.*` | путь к выходному файлу |
-| `--docx-profile` | `stealth` | набор слоёв для режима docx |
 | `-i, --instructions` | `instructions.txt` | текст инструкции для ИИ |
 | `-c, --canary` | — | метка копии (вшивается в payload) |
+| `--version` | — | показать версию и выйти |
+
+Только `--format pdf` (для DOCX игнорируются):
+
+| Опция | По умолчанию | Что делает |
+|---|---|---|
 | `--text-modes` | `tr3,blank,outside` | какие текстовые каналы включить |
 | `--rows` | `3` | сколько зон payload на странице |
 | `--size` | `10` | кегль payload, пт |
+| `--font` | ищем в системе | путь к `.ttf`/`.ttc` с кириллицей |
 | `--no-structural` | выкл. | не добавлять XMP/вложения/аннотации/ключи |
 | `--advertise` | выкл. | не обезличивать: видимые `AI-GATE` в свойствах |
-| `--verify` | выкл. | пиксельная проверка неизменности вёрстки |
+| `--verify` | выкл. | пиксельная проверка вёрстки **после конвертации в PDF** |
+
+Только `--format docx`:
+
+| Опция | По умолчанию | Что делает |
+|---|---|---|
+| `--docx-profile` | `stealth` | набор слоёв (`stealth` / `full` / `visible` / `minimal`) |
+
+> `--verify` для DOCX не работает напрямую — DOCX не рендерится напрямую.
+> Инструмент честно предупредит об этом. Проверка вёрстки для DOCX
+> описана в разделе [Проверка результата](#проверка-результата).
 
 ### Пакетная обработка
 
 ```bash
 for f in задания/*.docx; do
-  uv run inject.py "$f" -c "ПИ-331-$(basename "$f" .docx)" --verify
+  uv run inject.py "$f" --format docx -c "ПИ-331-$(basename "$f" .docx)"
+done
+
+# PDF-вариант с проверкой вёрстки
+for f in отчёты/*.pdf; do
+  uv run inject.py "$f" --verify -c "ПИ-331-$(basename "$f" .pdf)"
 done
 ```
 
@@ -301,13 +339,47 @@ pdf-prompt-inject/
 
 ## Проверка результата
 
-```bash
-# что извлечёт парсер:
-python -c "from pypdf import PdfReader; print(PdfReader('отчёт_injected.pdf').pages[0].extract_text())"
+### Что извлечёт парсер
 
-# форматирование не сломано:
-uv run inject.py отчёт.pdf --verify
+```bash
+# PDF
+uv run python -c "from pypdf import PdfReader; r=PdfReader('отчёт_injected.pdf'); print(r.pages[0].extract_text())"
+
+# DOCX
+uv run python -c "
+from docx import Document
+d = Document('отчёт_injected.docx')
+t = '\n'.join(p.text for p in d.paragraphs)
+for s in d.inline_shapes:
+    t += ' ' + (s._inline.docPr.get('descr') or '')
+print(t[:400])"
 ```
+
+Ищите начало своей инструкции из `instructions.txt`. Если его нет —
+каналы не отработали.
+
+### Что вёрстка не сломана
+
+**PDF** — встроенной проверкой:
+
+```bash
+uv run inject.py отчёт.pdf --verify
+# ✓ форматирование цело: 6 стр. из 24 пиксель-идентичны оригиналу
+```
+
+**DOCX** — сравнением до/после (инструмент предупредит, что `--verify`
+для DOCX неприменим):
+
+```bash
+soffice --headless --convert-to pdf --outdir /tmp/before отчёт.docx
+uv run inject.py отчёт.docx --format docx
+soffice --headless --convert-to pdf --outdir /tmp/after отчёт_injected.docx
+# сравните /tmp/before и /tmp/after любым визуальным diff
+```
+
+Практическое правило: профиль `stealth` не двигает вёрстку на **любом**
+документе, потому что все его слои лежат вне тела. Профиль `full`
+двигает — и насколько, зависит от конкретного файла.
 
 ## Устранение проблем
 
