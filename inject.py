@@ -9,10 +9,13 @@
 #   "Pillow>=10.0",
 # ]
 # ///
-"""PDF Prompt Inject — встраивает инструкцию для языковой модели в PDF.
+"""PDF Prompt Inject — встраивает инструкцию для языковой модели в PDF и DOCX.
 
-Поддерживает на входе .pdf, .docx, .doc, .odt, .rtf (конвертация через
-LibreOffice). Инструкция берётся из instructions.txt.
+Поддерживает на входе .pdf, .docx, .doc, .odt, .rtf.
+Режим задаётся опцией --format (или выводится из расширения -o):
+  pdf   документ конвертируется в PDF и инъекция идёт в PDF
+  docx  инъекция идёт прямо в .docx, вёрстка не меняется
+Инструкция берётся из instructions.txt.
 
 Текстовые каналы (видны извлечению текста, не видны при просмотре):
   tr3      — рендер-режим 3 (neither fill nor stroke)
@@ -48,7 +51,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_INSTRUCTIONS = HERE / "instructions.txt"
@@ -422,6 +425,9 @@ def main() -> None:
     )
     ap.add_argument("--version", action="version",
                     version=f"%(prog)s {__version__}")
+    ap.add_argument("-f", "--format", choices=["pdf", "docx", "auto"],
+                    default="auto",
+                    help="выходной формат: pdf / docx / auto (по расширению -o)")
     ap.add_argument("input", type=Path, help=".pdf / .docx / .doc / .odt / .rtf")
     ap.add_argument("-o", "--output", type=Path, default=None,
                     help="выходной PDF (по умолчанию <имя>_injected.pdf)")
@@ -438,6 +444,9 @@ def main() -> None:
     ap.add_argument("--advertise", action="store_true",
                     help="не скрывать следы: Creator/имена вложений с AI-GATE "
                          "(по умолчанию всё обезличено)")
+    ap.add_argument("--docx-profile", default="stealth",
+                    choices=["stealth", "full", "visible", "minimal"],
+                    help="набор слоёв для режима docx (stealth)")
     ap.add_argument("--verify", action="store_true",
                     help="проверить, что визуальный вывод не изменился")
     args = ap.parse_args()
@@ -450,14 +459,81 @@ def main() -> None:
     if not modes:
         sys.exit(f"--text-modes: нужно хотя бы одно из {TEXT_MODES}")
 
-    out = args.output or args.input.with_name(args.input.stem + "_injected.pdf")
+    # формат вывода: auto → по расширению -o, иначе по входу
+    fmt = args.format
+    if fmt == "auto":
+        if args.output and args.output.suffix.lower() == ".docx":
+            fmt = "docx"
+        elif args.input.suffix.lower() == ".docx" and not args.output:
+            fmt = "docx"
+        else:
+            fmt = "pdf"
+
+    ext = "docx" if fmt == "docx" else "pdf"
+    out = args.output or args.input.with_name(args.input.stem + f"_injected.{ext}")
     neutral = not args.advertise
 
     log(f"PDF Prompt Inject → {out.name}")
     log(f"  источник     : {args.input.name}")
+    log(f"  формат       : {fmt}")
     log(f"  инструкция   : {args.instructions.name} ({len(instruction)} симв.)")
     log(f"  canary       : {args.canary or '—'}")
 
+    if fmt == "docx":
+        run_docx(args, instruction, out, neutral)
+    else:
+        run_pdf(args, instruction, modes, out, neutral)
+
+    log(f"готово: {out}")
+
+
+def run_docx(args, instruction: str, out: Path, neutral: bool) -> None:
+    """Инъекция прямо в .docx — вёрстка не меняется."""
+    from docx_inject import inject_docx
+
+    src = args.input
+    tmp_docx = None
+    if src.suffix.lower() != ".docx":
+        tmp_docx = Path(tempfile.mkstemp(suffix=".docx")[1])
+        log(f"  конвертация {src.suffix} → .docx через LibreOffice…")
+        soffice = find_soffice()
+        if soffice is None:
+            sys.exit("LibreOffice не найден — нужен для конвертации в .docx")
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run([soffice, "--headless", "--convert-to", "docx",
+                            "--outdir", td, str(src)],
+                           check=True, capture_output=True, timeout=600)
+            produced = Path(td) / (src.stem + ".docx")
+            if not produced.exists():
+                sys.exit(f"LibreOffice не создал .docx: {produced}")
+            shutil.copyfile(produced, tmp_docx)
+        src = tmp_docx
+
+    try:
+        stats = inject_docx(
+            src, out, instruction, args.canary,
+            profile=args.docx_profile,
+            visible_color="BFBFBF", visible_size=8.0,
+            stealth_size=1.0,
+            stealth_white="FFFFFF", stealth_black="000000",
+            watermark_cfg=None)
+        for k, v in stats.items():
+            log(f"  {k:12} : {v}")
+
+        from docx import Document
+        doc = Document(str(out))
+        text = "\n".join(p.text for p in doc.paragraphs)
+        for shape in doc.inline_shapes:
+            text += " " + (shape._inline.docPr.get("descr") or "")
+        log(f"  {'извлечение':12} : «РЕЦЕПТ:»×{text.count('РЕЦЕПТ:')}, "
+            f"символов {len(text)}")
+    finally:
+        if tmp_docx is not None:
+            tmp_docx.unlink(missing_ok=True)
+
+
+def run_pdf(args, instruction: str, modes, out: Path, neutral: bool) -> None:
+    """Конвертация в PDF и инъекция в PDF."""
     tmp_clean = None
     if args.input.suffix.lower() == ".pdf":
         clean = args.input
@@ -486,8 +562,6 @@ def main() -> None:
     finally:
         if tmp_clean is not None:
             tmp_clean.unlink(missing_ok=True)
-
-    log(f"готово: {out}")
 
 
 if __name__ == "__main__":

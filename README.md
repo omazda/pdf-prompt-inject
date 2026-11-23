@@ -1,12 +1,16 @@
 # PDF Prompt Inject
 
-![version](https://img.shields.io/badge/version-0.0.1-blue)
+![version](https://img.shields.io/badge/version-0.1.0-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-Встраивает инструкцию для языковой модели в PDF так, чтобы её видел парсер документа,
-но не видел человек при обычном просмотре. Принимает `.pdf` на вход, а также `.docx` /
-`.doc` / `.odt` / `.rtf` — они конвертируются в PDF автоматически.
+Встраивает инструкцию для языковой модели в документ так, чтобы её видел парсер,
+но не видел человек при обычном просмотре. Работает с **PDF** и **DOCX**.
+
+- `--format pdf` — документ конвертируется в PDF, инъекция идёт в PDF
+- `--format docx` — инъекция идёт прямо в `.docx`, **вёрстка не меняется**
+
+На вход принимает `.pdf`, `.docx`, `.doc`, `.odt`, `.rtf`.
 
 > **Честное предупреждение.** Это скоростной фильтр против массового скормливания
 > документов ИИ, а не защита. Против конвейеров, читающих **картинки страниц**
@@ -17,9 +21,10 @@
 
 ## Возможности
 
-- **Три независимых текстовых канала**, переживающих разные экстракторы
-- **Четыре структурных канала** в коде PDF (не на странице)
-- Конвертация `.docx` / `.doc` / `.odt` / `.rtf` → PDF через LibreOffice
+- **PDF:** три текстовых канала + четыре структурных канала
+- **DOCX:** скрытый текст, свойства, комментарии — **без изменения вёрстки**
+  (проверено пиксельным diff, 24/24 страницы идентичны)
+- Конвертация `.doc` / `.odt` / `.rtf` через LibreOffice
 - Инструкция вынесена в `instructions.txt` — правится без кода
 - **Canary-метки** — уникальная метка на копию, чтобы отследить источник утечки
 - Проверка `--verify` — доказывает, что вёрстка не изменилась (пиксель в пиксель)
@@ -62,10 +67,11 @@ python inject.py отчёт.pdf
 2. Запустите:
 
 ```bash
-uv run inject.py отчёт.docx --canary "ПИ-331-ИВАНОВ" --verify
+uv run inject.py отчёт.pdf --canary "ПИ-331-ИВАНОВ" --verify   # → PDF
+uv run inject.py отчёт.docx --canary "ПИ-331-ИВАНОВ"          # → DOCX
 ```
 
-3. Получите `отчёт_injected.pdf` рядом с исходником.
+3. Рядом с исходником появится `отчёт_injected.pdf` или `отчёт_injected.docx`.
 
 ## Использование
 
@@ -73,8 +79,11 @@ uv run inject.py отчёт.docx --canary "ПИ-331-ИВАНОВ" --verify
 # PDF → PDF
 uv run inject.py отчёт.pdf
 
+# DOCX → DOCX с инъекцией (вёрстка не меняется)
+uv run inject.py задание.docx --format docx
+
 # DOCX / DOC → PDF с инъекцией
-uv run inject.py задание.docx
+uv run inject.py задание.docx --format pdf
 uv run inject.py старый_отчёт.doc
 
 # своя инструкция и метка копии
@@ -94,7 +103,9 @@ uv run inject.py отчёт.pdf --verify
 
 | Опция | По умолчанию | Что делает |
 |---|---|---|
-| `-o, --output` | `<имя>_injected.pdf` | путь к выходному файлу |
+| `-f, --format` | `auto` | `pdf` / `docx` / `auto` (по расширению `-o`) |
+| `-o, --output` | `<имя>_injected.*` | путь к выходному файлу |
+| `--docx-profile` | `stealth` | набор слоёв для режима docx |
 | `-i, --instructions` | `instructions.txt` | текст инструкции для ИИ |
 | `-c, --canary` | — | метка копии (вшивается в payload) |
 | `--text-modes` | `tr3,blank,outside` | какие текстовые каналы включить |
@@ -111,6 +122,51 @@ for f in задания/*.docx; do
   uv run inject.py "$f" -c "ПИ-331-$(basename "$f" .docx)" --verify
 done
 ```
+
+## Режим DOCX
+
+Инъекция идёт **прямо в `.docx`** — файл остаётся документом Word, никуда
+не конвертируется. Payload вешается внутрь существующих абзацев скрытыми
+прогонами и в свойства документа.
+
+### Безопасные слои
+
+Вёрстка проверена пиксельным diff (конвертация в PDF, сравнение постранично).
+Профиль `stealth` (по умолчанию) использует **только** слои, которые её не двигают:
+
+| Слой | Вёрстка | Что кладёт |
+|---|---|---|
+| `hidden_vanish` | ✅ не двигает | полная инструкция, скрытые прогоны `w:vanish` |
+| `core_properties` | ✅ | `title` / `subject` / `keywords` / `comments` |
+| `comment` | ✅ | комментарий Word с полной инструкцией |
+
+### Слои, которые двигают вёрстку
+
+Они остаются в профиле `full`, но **по умолчанию выключены**: текст переносится
+по строкам и растягивает абзацы, а `alt_texts` на всех рисунках меняет вёрстку
+первой страницы.
+
+| Слой | Эффект | Причина |
+|---|---|---|
+| `white_micro`, `micro_black` | стр. 1, 15, 16, 21–24 | перенос длинного прогона |
+| `header_footer` | стр. 1 | рост колонтитула |
+| `alt_texts` | стр. 1 | пересчёт вёрстки рисунков |
+| `visible_gray`, `signal_repeats`, `caption_signals`, `watermark` | видимы + двигают | отрисованный текст |
+
+### Профили
+
+```bash
+uv run inject.py отчёт.docx --format docx --docx-profile stealth   # по умолчанию
+uv run inject.py отчёт.docx --format docx --docx-profile full      # все слои
+uv run inject.py отчёт.docx --format docx --docx-profile minimal   # только свойства
+```
+
+| Профиль | Слои |
+|---|---|
+| `stealth` | `hidden_vanish`, `core_properties`, `comment` |
+| `full` | все слои (вёрстка может сместиться) |
+| `visible` | `visible_gray`, `signal_repeats`, `caption_signals`, `watermark`, свойства |
+| `minimal` | только `core_properties` |
 
 ## instructions.txt
 
@@ -218,9 +274,11 @@ canary-метки, устная защита и процессные артеф�
 
 ```
 pdf-prompt-inject/
-├── inject.py           основной скрипт (PEP 723 — uv подтянет зависимости сам)
+├── inject.py           CLI и инъекция в PDF (PEP 723 — uv подтянет зависимости сам)
+├── docx_inject.py      инъекция в DOCX (без изменения вёрстки)
 ├── instructions.txt    инструкция для ИИ ← правите именно его
 ├── requirements.txt    зависимости для pip-установки
+├── LICENSE             MIT
 └── README.md           этот файл
 ```
 
