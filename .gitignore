@@ -20,6 +20,11 @@ uv.lock
 *.rtf
 !instructions.txt
 
+# Учебные файлы demo/ — часть инструкции, их ищут по ссылкам из demo/README.md
+!demo/**/*.docx
+!demo/**/*.doc
+!demo/**/*.pdf
+
 # ОС и редакторы
 .DS_Store
 Thumbs.db
